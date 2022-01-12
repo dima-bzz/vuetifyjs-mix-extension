@@ -1,6 +1,9 @@
 const mix = require('laravel-mix')
+const Chunks = require('laravel-mix/src/Chunks').Chunks
+const File = require('laravel-mix/src/File')
 const getPath = require('./src/getPath')
 const resolveOptions = require('./src/resolveOptions')
+const path = require('path')
 
 class Vuetify {
     constructor() {
@@ -53,8 +56,17 @@ class Vuetify {
             use: [
                 this.withExtract()
                     ? require('mini-css-extract-plugin').loader
-                    : 'vue-style-loader',
-                'css-loader',
+                    : (mix.vue ? {
+                        loader: 'style-loader',
+                    } : 'vue-style-loader'),
+                mix.vue ? {
+                    loader: 'css-loader',
+                    options: {
+                        modules: {
+                            auto: true
+                        }
+                    }
+                } : 'css-loader',
                 ...this.addPostcssIfNeeded(),
                 {
                     loader: 'sass-loader',
@@ -68,6 +80,37 @@ class Vuetify {
                 }
             ]
         }))
+    }
+
+    updateChunks(config) {
+        const chunks = Chunks.instance()
+        const re = /(?<!node_modules)[\\/]node_modules[\\/](vuetify[\\/])/i
+        const groups = config.optimization.splitChunks.cacheGroups
+        Object.keys(groups).forEach((k) => {
+            if (typeof groups[k] === 'object') {
+                if (groups[k].type === 'css/mini-extract' && groups[k].chunks === 'all') {
+                    const orig = groups[k].test
+                    groups[k].test = (module, context) => {
+                        const name = module.nameForCondition()
+
+                        return name && !re.test(name) && orig(module, context)
+                    }
+                }
+            }
+        })
+
+        const output = new File(this.extract)
+
+        chunks.add(
+            'styles-vuetify',
+            output.normalizedOutputPath(),
+            [re, module => module.type === 'css/mini-extract'],
+            {
+                chunks: 'all',
+                enforce: true,
+                type: 'css/mini-extract'
+            }
+        )
     }
 
     webpackRules() {
@@ -94,10 +137,20 @@ class Vuetify {
 
     addExtract(config) {
         const MiniCssExtractPlugin = require('mini-css-extract-plugin')
+        const plugin = config.plugins.find((p) => p instanceof MiniCssExtractPlugin)
+        if (!plugin) {
+            config.plugins.push(
+                new MiniCssExtractPlugin({
+                    filename: '[name].css',
+                    chunkFilename: '[name].css',
+                    ignoreOrder: true,
+                })
+            )
+        } else {
+            plugin.options.ignoreOrder = true
+        }
 
-        config.plugins.push(
-            new MiniCssExtractPlugin({ filename: this.extract })
-        )
+        this.updateChunks(config)
     }
 
     excludeVuetifyPath(config) {
@@ -109,3 +162,4 @@ class Vuetify {
 }
 
 mix.extend('vuetify', new Vuetify())
+
